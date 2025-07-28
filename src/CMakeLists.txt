@@ -15,7 +15,6 @@ SET(SOCKS5_NETIO_SRC
 
 SET(TLSFLAT_SRC
         ${CMAKE_CURRENT_SOURCE_DIR}/tls-flat/tlsflat.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/tls-flat/root.c
         ${CMAKE_CURRENT_SOURCE_DIR}/tls-flat/handler.c
         ${CMAKE_CURRENT_SOURCE_DIR}/tls-flat/crt_pool.c
         ${CMAKE_CURRENT_SOURCE_DIR}/tls-flat/tls.c
@@ -47,7 +46,7 @@ TARGET_COMPILE_FEATURES(socks5-crypto
 )
 
 SET(SOCKS5CRYPTO_ADDTION_HDR
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 TARGET_INCLUDE_DIRECTORIES(socks5-crypto PUBLIC ${SOCKS5CRYPTO_ADDTION_HDR})
 

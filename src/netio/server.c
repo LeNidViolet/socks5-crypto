@@ -155,7 +155,7 @@ static int server_run(socks5_crypto_ctx *ctx) {
     memset(&srv_addrs, 0, sizeof(srv_addrs));
     server_walk_addresses();
 
-    s5netio_on_msg("0.0.0.0", ctx->config.bind_port);
+    s5netio_on_bind("0.0.0.0", ctx->config.bind_port);
 
     // uv_run returns 0 when all handles are closed;
     // a non-zero return indicates uv_stop was called, or live handles remain
