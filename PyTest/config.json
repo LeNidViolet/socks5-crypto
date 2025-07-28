@@ -1,0 +1,12 @@
+{
+    "io_length": 500,
+    "server_port": 50010,
+    "server_address_v4": "10.211.55.10",
+    "server_address_v6": "2408:821b:9828:a420:4d4:6d11:c26a:a0db",
+
+    "socks5_proxy_address_v4": "127.0.0.1",
+    "socks5_proxy_address_v6": "::1",
+    "socks5_proxy_port": 7110,
+
+    "respon_delay_sec": 0.05
+}
