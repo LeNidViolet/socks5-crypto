@@ -28,18 +28,6 @@
 #include "mbedtls/cipher.h"
 
 typedef struct {
-    const mbedtls_cipher_type_t type;
-    const char *mbedtls_name;
-    const char *ss_name;
-    const unsigned int key_len;
-    const unsigned int iv_len;
-} crypto_info;
-
-
-#define MAX_CRYPTO_KEY_LEN          (32)
-#define MAX_CRYPTO_SALT_LEN         MAX_SS_SALT_LEN
-
-typedef struct {
 
     socks5_crypto_callback callbacks;
 } crypto_env;
