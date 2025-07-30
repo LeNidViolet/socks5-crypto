@@ -48,7 +48,7 @@ typedef struct {
 } DGRAM_SESSION_CRYP;
 
 
-extern crypto_env env;
+extern crypto_env socks5_env;
 
 
 
@@ -61,15 +61,15 @@ void socks5_crypto_on_msg(int level, const char *format, ...) {
     vsnprintf(msg, sizeof(msg), format, ap);
     va_end(ap);
 
-    if ( env.callbacks.on_msg ) {
-        env.callbacks.on_msg(level, msg);
+    if ( socks5_env.callbacks.on_msg ) {
+        socks5_env.callbacks.on_msg(level, msg);
     }
 }
 
 // ReSharper disable once CppParameterMayBeConst
 void socks5_crypto_on_bind(const char *host, unsigned short port) {
-    if ( env.callbacks.on_bind ) {
-        env.callbacks.on_bind(host, port);
+    if ( socks5_env.callbacks.on_bind ) {
+        socks5_env.callbacks.on_bind(host, port);
     }
 }
 
@@ -105,8 +105,8 @@ void socks5_crypto_on_stream_connection_made(ADDRESS_PAIR *addr, void *ctx) {
         tlsflat_on_stream_connection_made(addr, session->stream_id, session, &session->tls_ctx);
     }
 
-    if ( env.callbacks.on_stream_connection_made ) {
-        env.callbacks.on_stream_connection_made(
+    if ( socks5_env.callbacks.on_stream_connection_made ) {
+        socks5_env.callbacks.on_stream_connection_made(
             addr->local->domain,
             addr->local->ip,
             addr->local->port,
@@ -129,10 +129,10 @@ void socks5_crypto_on_stream_teardown(void *ctx) {
         tlsflat_on_stream_teardown(session->tls_ctx);
     }
 
-    if ( env.callbacks.on_stream_teardown ) {
+    if ( socks5_env.callbacks.on_stream_teardown ) {
         /* 如果链接未链接上 不用继续向上调用 */
         if ( session->connected ) {
-            env.callbacks.on_stream_teardown(session->index);
+            socks5_env.callbacks.on_stream_teardown(session->index);
         }
     }
 
@@ -155,8 +155,8 @@ void socks5_crypto_on_new_dgram(const ADDRESS_PAIR *addr, void **ctx) {
     session->index = dgram_index++;
 
     *ctx = session;
-    if ( env.callbacks.on_dgram_connection_made ) {
-        env.callbacks.on_dgram_connection_made(
+    if ( socks5_env.callbacks.on_dgram_connection_made ) {
+        socks5_env.callbacks.on_dgram_connection_made(
             addr->local->domain,
             addr->local->ip,
             addr->local->port,
@@ -175,8 +175,8 @@ void socks5_crypto_on_dgram_teardown(void *ctx) {
     session = (DGRAM_SESSION_CRYP *)ctx;
     CHECK(session);
 
-    if ( env.callbacks.on_dgram_teardown ) {
-        env.callbacks.on_dgram_teardown(session->index);
+    if ( socks5_env.callbacks.on_dgram_teardown ) {
+        socks5_env.callbacks.on_dgram_teardown(session->index);
     }
 
     if ( DEBUG_CHECKS )
@@ -201,8 +201,8 @@ int socks5_crypto_on_plain_stream(const BUF_RANGE *buf, int direct, void *ctx) {
         BREAK_NOW;
     }
 
-    if ( env.callbacks.on_plain_stream ) {
-        env.callbacks.on_plain_stream(
+    if ( socks5_env.callbacks.on_plain_stream ) {
+        socks5_env.callbacks.on_plain_stream(
             buf->data_base,
             buf->data_len,
             STREAM_UP == direct,
@@ -223,8 +223,8 @@ void socks5_crypto_tls_on_plain_stream(const char *data, size_t data_len, int di
     session = (STREAM_SESSION_CRYP *)ss_ctx;
     CHECK(session);
 
-    if ( env.callbacks.on_plain_stream ) {
-        env.callbacks.on_plain_stream(
+    if ( socks5_env.callbacks.on_plain_stream ) {
+        socks5_env.callbacks.on_plain_stream(
             data,
             data_len,
             STREAM_UP == direct,
@@ -240,8 +240,8 @@ void socks5_crypto_on_plain_dgram(const BUF_RANGE *buf, int direct, void *ctx) {
     session = (DGRAM_SESSION_CRYP *)ctx;
     CHECK(session);
 
-    if ( env.callbacks.on_plain_dgram ) {
-        env.callbacks.on_plain_dgram(
+    if ( socks5_env.callbacks.on_plain_dgram ) {
+        socks5_env.callbacks.on_plain_dgram(
             buf->data_base,
             buf->data_len,
             STREAM_UP == direct,

@@ -23,14 +23,14 @@
 
 #include "internal.h"
 
-crypto_env env = { 0 };
-static int ss_running = 0;
+crypto_env socks5_env = { 0 };
+static int socks5_running = 0;
 
 int socks5_crypto_launch(const socks5_crypto_ctx *ctx) {
     int ret = -1;
     ioctl_port io_port;
 
-    BREAK_ON_FALSE(0 == ss_running);
+    BREAK_ON_FALSE(0 == socks5_running);
 
     BREAK_ON_NULL(ctx);
     BREAK_ON_NULL(ctx->config.root_cert);
@@ -38,7 +38,7 @@ int socks5_crypto_launch(const socks5_crypto_ctx *ctx) {
 
 
     /* 保存回调 */
-    env.callbacks = ctx->callbacks;
+    socks5_env.callbacks = ctx->callbacks;
 
 
     /* 获取NETIO底层发送数据等接口.需要在TLSFLAT中使用 */
@@ -54,12 +54,12 @@ int socks5_crypto_launch(const socks5_crypto_ctx *ctx) {
     }
 
 
-    ss_running = 1;
+    socks5_running = 1;
 
     /* 启动SS NETIO, 开始监听 */
     ret = s5netio_server_launch(ctx);
 
-    ss_running = 0;
+    socks5_running = 0;
 
 
     /* 释放 TLS 资源 */
@@ -71,8 +71,8 @@ BREAK_LABEL:
 }
 
 void socks5_crypto_stop() {
-    if ( ss_running ) {
+    if ( socks5_running ) {
         s5netio_server_stop();
-        ss_running = 0;
+        socks5_running = 0;
     }
 }
