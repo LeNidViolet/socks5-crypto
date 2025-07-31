@@ -29,10 +29,10 @@
 
 
 // ==========
-socks5_crypto_ctx srv_ctx;
+
 SERVER_ADDRESSES srv_addrs;
 
-static int server_run(socks5_crypto_ctx *ctx);
+static int server_run(const socks5_server_config *ctx);
 static void server_handle_walk_callback(uv_handle_t* Handle, void* arg);
 static void server_exit_async_cb(uv_async_t* handle);
 
@@ -46,7 +46,7 @@ union {
 
 
 /* LAUNCHER */
-int s5netio_server_launch(const socks5_crypto_ctx *ctx) {
+int netio_server_launch(const socks5_server_config *ctx) {
     int ret = -1;
 
     BREAK_ON_NULL(ctx);
@@ -56,10 +56,7 @@ int s5netio_server_launch(const socks5_crypto_ctx *ctx) {
     dgrams_init();
     dns_cache_init();
 
-    memcpy(&srv_ctx, ctx, sizeof(srv_ctx));
-    srv_ctx.config.idel_timeout *= 1000;
-
-    ret = server_run(&srv_ctx);
+    ret = server_run(ctx);
 
     dgrams_clear();
     dns_cache_clear();
@@ -70,14 +67,14 @@ BREAK_LABEL:
 }
 
 /* 取得NETIO底层操作接口 */
-void s5netio_server_port(ioctl_port *port) {
-    port->write_stream_out = s5netio_write_stream_out;
-    port->stream_pause = s5netio_stream_pause;
+void netio_server_port(ioctl_port *port) {
+    port->write_stream_out = netio_write_stream_out;
+    port->stream_pause = netio_stream_pause;
 }
 
 
 // ReSharper disable once CppParameterMayBeConstPtrOrRef
-static int server_run(socks5_crypto_ctx *ctx) {
+static int server_run(const socks5_server_config *ctx) {
     uv_loop_t                   *loop;
     int                         ret;
 
@@ -155,7 +152,7 @@ static int server_run(socks5_crypto_ctx *ctx) {
     memset(&srv_addrs, 0, sizeof(srv_addrs));
     server_walk_addresses();
 
-    s5netio_on_bind("0.0.0.0", ctx->config.bind_port);
+    netio_on_bind("0.0.0.0", ctx->config.bind_port);
 
     // uv_run returns 0 when all handles are closed;
     // a non-zero return indicates uv_stop was called, or live handles remain
@@ -172,13 +169,12 @@ static int server_run(socks5_crypto_ctx *ctx) {
     uv_loop_close(loop);
 
     // MORE RESOURCE CLEAN
-    memset(&srv_ctx, 0, sizeof(srv_ctx));
     memset(&srv_addrs, 0, sizeof(srv_addrs));
 
 BREAK_LABEL:
 
     if (!success) {
-        s5netio_on_msg(LOG_ERROR,"tcp/udp server launch failed");
+        netio_on_msg(LOG_ERROR,"tcp/udp server launch failed");
     }
 
     return ret;
@@ -199,7 +195,7 @@ static void server_handle_walk_callback(uv_handle_t* Handle, void* arg) {
 
 
 
-void s5netio_server_stop(void) {
+void netio_server_stop(void) {
 
     uv_async_send(&exit_async.async);
 }
@@ -259,8 +255,8 @@ static void server_walk_addresses() {
         CHECK(0 == ret);
     }
 
-    s5netio_on_msg(LOG_KEY, "local ipv4 address: %s", srv_addrs.addrv4_str);
-    s5netio_on_msg(LOG_KEY, "local ipv6 address: %s", srv_addrs.addrv6_str);
+    netio_on_msg(LOG_KEY, "local ipv4 address: %s", srv_addrs.addrv4_str);
+    netio_on_msg(LOG_KEY, "local ipv6 address: %s", srv_addrs.addrv6_str);
 
     uv_free_interface_addresses(interfaces, count);
 }

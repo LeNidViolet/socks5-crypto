@@ -71,6 +71,17 @@ if ( !(value) )                                         \
 #define S5_IPV4_UDP_SEND_HDR_LEN                10
 #define S5_IPV6_UDP_SEND_HDR_LEN                22
 
+#define MAX_S5_HDR_LEN                          (255 + 6)
+#define MAX_SS_SALT_LEN                         (32)
+#define MAX_SS_TAG_LEN                          (16)
+
+#define MAX_SS_TCP_WRAPPER_LEN     (2 + MAX_SS_TAG_LEN + MAX_SS_TAG_LEN + MAX_SS_SALT_LEN)
+#define MAX_SS_UDP_WRAPPER_LEN     (MAX_SS_TAG_LEN + MAX_SS_SALT_LEN)
+
+#define MAX_SS_TCP_FRAME_LEN       (MAX_TCP_PAYLOAD_LEN + MAX_S5_HDR_LEN + MAX_SS_TCP_WRAPPER_LEN)
+#define MAX_SS_UDP_FRAME_LEN       (MAX_UDP_PAYLOAD_LEN + MAX_S5_HDR_LEN + MAX_SS_UDP_WRAPPER_LEN)
+
+
 
 #define htons_u(x)          (unsigned short)( (((x) & 0xffu) << 8u) | (((x) & 0xff00u) >> 8u) )
 #define ntohs_u(x)          htons_u(x)

@@ -23,6 +23,9 @@
 
 #include <stdlib.h>
 #include "internal.h"
+#include "socks5-crypto/socks5-crypto.h"
+
+extern socks5_server_config srv_cfg;
 
 // ==========
 void socks5_crypto_on_msg(int level, const char *format, ...);
@@ -34,7 +37,10 @@ void socks5_crypto_on_new_dgram(const ADDRESS_PAIR *addr, void **ctx);
 void socks5_crypto_on_dgram_teardown(void *ctx);
 int  socks5_crypto_on_plain_stream(const BUF_RANGE *buf, int direct, void *ctx);
 void socks5_crypto_on_plain_dgram(const BUF_RANGE *buf, int direct, void *ctx);
-
+int  socks5_crypto_on_stream_encrypt(BUF_RANGE *buf, void *ctx);
+int  socks5_crypto_on_stream_decrypt(BUF_RANGE *buf, void *ctx);
+int  socks5_crypto_on_dgram_encrypt(BUF_RANGE *buf);
+int  socks5_crypto_on_dgram_decrypt(BUF_RANGE *buf);
 
 // ==========
 
@@ -44,10 +50,10 @@ typedef struct {
     CONN  *conn;
 } snd_ctx;
 
-static void s5netio_write_stream_out_done(uv_write_t *req, int status);
+static void netio_write_stream_out_done(uv_write_t *req, int status);
 
 // ReSharper disable once CppParameterMayBeConst
-void s5netio_on_msg(int level, const char *format, ...) {
+void netio_on_msg(int level, const char *format, ...) {
     va_list ap;
     char msg[1024];
 
@@ -59,11 +65,11 @@ void s5netio_on_msg(int level, const char *format, ...) {
 }
 
 // ReSharper disable once CppParameterMayBeConst
-void s5netio_on_bind(const char *host, unsigned short port) {
+void netio_on_bind(const char *host, unsigned short port) {
     socks5_crypto_on_bind(host, port);
 }
 
-void s5netio_on_connection_made(PROXY_NODE *pn) {
+void netio_on_connection_made(PROXY_NODE *pn) {
     ADDRESS_PAIR pair;
 
     pair.local = &pn->incoming.peer;
@@ -72,18 +78,18 @@ void s5netio_on_connection_made(PROXY_NODE *pn) {
     socks5_crypto_on_stream_connection_made(&pair, pn->ctx);
 }
 
-void s5netio_on_new_stream(const CONN *conn) {
+void netio_on_new_stream(const CONN *conn) {
     void *ctx = NULL;
 
     socks5_crypto_on_new_stream(&conn->peer, &ctx, conn->pn);
     conn->pn->ctx = ctx;
 }
 
-void s5netio_on_stream_teardown(const PROXY_NODE *pn) {
+void netio_on_stream_teardown(const PROXY_NODE *pn) {
     socks5_crypto_on_stream_teardown(pn->ctx);
 }
 
-void s5netio_on_new_dgram(ADDRESS *local, ADDRESS *remote, void **ctx) {
+void netio_on_new_dgram(ADDRESS *local, ADDRESS *remote, void **ctx) {
     ADDRESS_PAIR pair;
 
     pair.local = local;
@@ -92,11 +98,76 @@ void s5netio_on_new_dgram(ADDRESS *local, ADDRESS *remote, void **ctx) {
     socks5_crypto_on_new_dgram(&pair, ctx);
 }
 
-void s5netio_on_dgram_teardown(void *ctx) {
+void netio_on_dgram_teardown(void *ctx) {
     socks5_crypto_on_dgram_teardown(ctx);
 }
 
-int s5netio_on_plain_stream(const CONN *conn) {
+
+// ReSharper disable once CppParameterMayBeConst
+int netio_on_stream_encrypt(CONN *conn, int offset) {
+    int ret;
+    BUF_RANGE buf;
+
+    buf.buf_base = conn->buf.buf_base;
+    buf.buf_len = conn->buf.buf_len;
+    buf.data_base = buf.buf_base + offset;
+    buf.data_len = (size_t)conn->result - offset;
+
+    conn->buf.data_base = conn->buf.buf_base + offset;
+    conn->buf.data_len = (size_t)conn->result - offset;
+    ret = socks5_crypto_on_stream_encrypt(&buf, conn->pn->ctx);
+
+    conn->buf.data_base = buf.data_base;
+    conn->buf.data_len = buf.data_len;
+
+    return ret;
+}
+
+// ReSharper disable once CppParameterMayBeConst
+int netio_on_stream_decrypt(CONN *conn, int offset) {
+    int ret;
+    BUF_RANGE buf;
+
+    buf.buf_base = conn->buf.buf_base;
+    buf.buf_len = conn->buf.buf_len;
+    buf.data_base = buf.buf_base + offset;
+    buf.data_len = (size_t)conn->result - offset;
+
+    conn->buf.data_base = conn->buf.buf_base + offset;
+    conn->buf.data_len = (size_t)conn->result - offset;
+    ret = socks5_crypto_on_stream_decrypt(&buf, conn->pn->ctx);
+
+    conn->buf.data_base = buf.data_base;
+    conn->buf.data_len = buf.data_len;
+
+    return ret;
+}
+
+// ReSharper disable once CppParameterMayBeConst
+int netio_on_dgram_encrypt(BUF_RANGE *buf, int offset) {
+    int ret;
+
+    buf->data_base = buf->buf_base + offset;
+    buf->data_len = buf->data_len - offset;
+
+    ret = socks5_crypto_on_dgram_encrypt(buf);
+
+    return ret;
+}
+
+// ReSharper disable once CppParameterMayBeConst
+int netio_on_dgram_decrypt(BUF_RANGE *buf, int offset) {
+    int ret;
+
+    buf->data_base = buf->buf_base + offset;
+    buf->data_len = buf->data_len - offset;
+
+    ret = socks5_crypto_on_dgram_decrypt(buf);
+
+    return ret;
+}
+
+int netio_on_plain_stream(const CONN *conn) {
     int action;
     const int direct = conn == &conn->pn->incoming ? STREAM_UP : STREAM_DOWN;
 
@@ -108,13 +179,13 @@ int s5netio_on_plain_stream(const CONN *conn) {
     return action;
 }
 
-void s5netio_on_plain_dgram(const BUF_RANGE *buf, const int direct, void *ctx) {
+void netio_on_plain_dgram(const BUF_RANGE *buf, const int direct, void *ctx) {
 
     socks5_crypto_on_plain_dgram(buf, direct, ctx);
 }
 
 /* SERVER SIDE ONLY */
-int s5netio_write_stream_out(
+int netio_write_stream_out(
     // ReSharper disable once CppParameterMayBeConst
     const char *buf,  size_t len, int direct, void *stream_id) {
     int ret = -1;
@@ -142,6 +213,11 @@ int s5netio_write_stream_out(
     snd_ctx->buf.data_len = len;
     memmove(snd_ctx->buf.data_base, buf, len);
 
+    if ( srv_cfg.config.asSocks5 == 0 && STREAM_DOWN == direct ) {
+        ret = socks5_crypto_on_stream_encrypt(&snd_ctx->buf, conn->pn->ctx);
+        ASSERT(0 == ret);
+        ret = -2;
+    }
 
     buf_t = uv_buf_init(snd_ctx->buf.data_base, snd_ctx->buf.data_len);
 
@@ -152,7 +228,7 @@ int s5netio_write_stream_out(
                        &conn->handle.stream,
                        &buf_t,
                        1,
-                       s5netio_write_stream_out_done) ) {
+                       netio_write_stream_out_done) ) {
         free(snd_ctx);
         do_kill(conn->pn);
         BREAK_NOW;
@@ -167,7 +243,7 @@ BREAK_LABEL:
     return ret;
 }
 
-static void s5netio_write_stream_out_done(uv_write_t *req, int status) {
+static void netio_write_stream_out_done(uv_write_t *req, int status) {
     CONN *conn;
     snd_ctx *snd_ctx;
 
@@ -182,7 +258,7 @@ static void s5netio_write_stream_out_done(uv_write_t *req, int status) {
 }
 
 // ReSharper disable once CppParameterMayBeConst
-void s5netio_stream_pause(void *stream_id, int direct, int pause) {
+void netio_stream_pause(void *stream_id, int direct, int pause) {
     PROXY_NODE *pn;
     CONN *conn;
 

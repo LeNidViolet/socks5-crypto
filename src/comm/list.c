@@ -22,6 +22,7 @@
  */
 #include "list.h"
 
+// ReSharper disable once CppParameterMayBeConst
 void InitializeListHead(PLIST_ENTRY ListHead) {
     ListHead->Flink = ListHead->Blink = ListHead;
 }

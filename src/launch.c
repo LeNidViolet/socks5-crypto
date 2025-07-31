@@ -23,26 +23,38 @@
 
 #include "internal.h"
 
-crypto_env socks5_env = { 0 };
-static int socks5_running = 0;
+socks5_server_config srv_cfg = { 0 };
+crypto_env crypto = { 0 };
+static int srv_running = 0;
 
-int socks5_crypto_launch(const socks5_crypto_ctx *ctx) {
+int socks5_crypto_launch(const socks5_server_config *ctx) {
     int ret = -1;
     ioctl_port io_port;
 
-    BREAK_ON_FALSE(0 == socks5_running);
+    BREAK_ON_FALSE(0 == srv_running);
 
     BREAK_ON_NULL(ctx);
     BREAK_ON_NULL(ctx->config.root_cert);
     BREAK_ON_NULL(ctx->config.root_key);
 
+    if (ctx->config.asSocks5 == 0) {
+        BREAK_ON_NULL(ctx->config.method);
+        BREAK_ON_NULL(ctx->config.password);
 
-    /* 保存回调 */
-    socks5_env.callbacks = ctx->callbacks;
+        crypto.method = get_method_by_name(ctx->config.method);
+        BREAK_ON_NULL(crypto.method);
+
+
+        /* 根据设置的密码生成加密用的KEY */
+        CHECK(0 == gen_key(ctx->config.password, crypto.key, crypto.method->key_len));
+    }
+
+    srv_cfg = *ctx;
+    srv_cfg.config.idel_timeout *= 1000;
 
 
     /* 获取NETIO底层发送数据等接口.需要在TLSFLAT中使用 */
-    s5netio_server_port(&io_port);
+    netio_server_port(&io_port);
     /* 初始化 TLS 部分 */
     ret = tlsflat_init(
         &io_port,
@@ -53,14 +65,23 @@ int socks5_crypto_launch(const socks5_crypto_ctx *ctx) {
         BREAK_NOW;
     }
 
+    if (ctx->config.asSocks5 == 0) {
+        /* 初始化加密解密单元 */
+        init_crypt_unit();
+    }
 
-    socks5_running = 1;
+
+    srv_running = 1;
 
     /* 启动SS NETIO, 开始监听 */
-    ret = s5netio_server_launch(ctx);
+    ret = netio_server_launch(ctx);
 
-    socks5_running = 0;
+    srv_running = 0;
 
+    if (ctx->config.asSocks5 == 0) {
+        /* 释放加密解密单元资源 */
+        free_crypt_unit();
+    }
 
     /* 释放 TLS 资源 */
     tlsflat_clear();
@@ -71,8 +92,8 @@ BREAK_LABEL:
 }
 
 void socks5_crypto_stop() {
-    if ( socks5_running ) {
-        s5netio_server_stop();
-        socks5_running = 0;
+    if ( srv_running ) {
+        netio_server_stop();
+        srv_running = 0;
     }
 }

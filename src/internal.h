@@ -27,24 +27,47 @@
 #include "comm/comm.h"
 #include "mbedtls/cipher.h"
 
-typedef struct {
 
-    socks5_crypto_callback callbacks;
+typedef struct {
+    const mbedtls_cipher_type_t type;
+    const char *mbedtls_name;
+    const char *ss_name;
+    const unsigned int key_len;
+    const unsigned int iv_len;
+} crypto_info;
+
+
+#define MAX_CRYPTO_KEY_LEN          (32)
+#define MAX_CRYPTO_SALT_LEN         MAX_SS_SALT_LEN
+
+typedef struct {
+    const crypto_info *method;
+    unsigned char key[MAX_CRYPTO_KEY_LEN];
 } crypto_env;
+
+/* UTIL.C */
+/* return 0 if success */
+int gen_iv(const char *seed, unsigned char *iv, size_t iv_len);
+/* return 0 if success */
+int gen_key(const char *seed, unsigned char *key, size_t key_len);
+
+const crypto_info *get_method_by_name(const char *name);
 
 
 /* CALLBACK.C */
+int  init_crypt_unit(void);
+void free_crypt_unit(void);
 void socks5_crypto_on_msg(int level, const char *format, ...);
 
 
 /* EXTERNAL FUNCTION */
-int s5netio_server_launch(const socks5_crypto_ctx *ctx);
-void s5netio_server_stop(void);
-void s5netio_server_port(ioctl_port *port);
-int tlsflat_init(const ioctl_port *port, const char *root_crt, const char *root_key);
+int  netio_server_launch(const socks5_server_config *ctx);
+void netio_server_stop(void);
+void netio_server_port(ioctl_port *port);
+int  tlsflat_init(const ioctl_port *port, const char *root_crt, const char *root_key);
 void tlsflat_clear(void);
 void tlsflat_on_stream_connection_made(const ADDRESS_PAIR *addr, void *stream_id, void *caller_ctx, void **tls_ctx);
 void tlsflat_on_stream_teardown(void *tls_ctx);
-int tlsflat_on_plain_stream(const BUF_RANGE *buf, int direct, void *ctx);
+int  tlsflat_on_plain_stream(const BUF_RANGE *buf, int direct, void *ctx);
 
 #endif //SOCKS5_CRYPTO_INTERNAL_H

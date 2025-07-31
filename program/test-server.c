@@ -90,10 +90,14 @@ void on_plain_dgram(const char *data, size_t data_len, bool send_out, int dgram_
 
 
 int main() {
-    socks5_crypto_ctx ctx = { 0 };
+    socks5_server_config ctx = { 0 };
     ctx.config.root_cert = "/Users/raven/Documents/macbook/root.crt";
     ctx.config.root_key = "/Users/raven/Documents/macbook/root.key";
     ctx.config.bind_port = 7110;
+
+    ctx.config.asSocks5 = 0;
+    ctx.config.password = "123456";
+    ctx.config.method = "aes-256-cfb";
 
     ctx.config.idel_timeout = 120;
 

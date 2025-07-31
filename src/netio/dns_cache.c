@@ -218,7 +218,7 @@ static void dns_cache_free(dns_cache_entry *dnsc) {
     entry_outstanding--;
 
     if ( 0 == entry_outstanding )
-        s5netio_on_msg(LOG_INFO, "dns cache entry outstanding return to 0");
+        netio_on_msg(LOG_INFO, "dns cache entry outstanding return to 0");
     if ( 0 == ip_outstanding )
-        s5netio_on_msg(LOG_INFO, "dns cache ip outstanding return to 0");
+        netio_on_msg(LOG_INFO, "dns cache ip outstanding return to 0");
 }

@@ -136,5 +136,5 @@ static void dgrams_free(DGRAMS *ds) {
     ds_outstanding--;
 
     if ( 0 == ds_outstanding )
-        s5netio_on_msg(LOG_INFO, "dgrams outstanding return to 0");
+        netio_on_msg(LOG_INFO, "dgrams outstanding return to 0");
 }

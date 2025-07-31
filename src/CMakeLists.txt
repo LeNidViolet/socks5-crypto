@@ -27,6 +27,7 @@ SET(TLSFLAT_SRC
 
 SET(SOCKS5CRYPTO_SRC
         ${CMAKE_CURRENT_SOURCE_DIR}/launch.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/utils.c
         ${CMAKE_CURRENT_SOURCE_DIR}/handler.c
         ${CMAKE_CURRENT_SOURCE_DIR}/comm/list.c
         ${SOCKS5_NETIO_SRC}

@@ -29,7 +29,7 @@
 
 // ==========
 
-extern socks5_crypto_ctx srv_ctx;
+extern socks5_server_config srv_cfg;
 
 static int dgram_read_local(uv_udp_t *handle);
 
@@ -71,8 +71,10 @@ int server_dgram_launch(uv_loop_t *loop, const struct sockaddr *addr) {
 
     /* associate buf to handle */
     ENSURE((buf = malloc(sizeof(*buf))) != NULL);
-    ENSURE((buf->buf_base = malloc(MAX_UDP_PAYLOAD_LEN)) != NULL);
-    buf->buf_len     = MAX_UDP_PAYLOAD_LEN;
+    ENSURE((buf->buf_base = malloc(MAX_SS_UDP_FRAME_LEN)) != NULL);
+    buf->buf_len    = MAX_SS_UDP_FRAME_LEN;
+    buf->data_base  = buf->buf_base;
+    buf->data_len   = 0;
 
     uv_handle_set_data((uv_handle_t*)udp_handle, buf);
 
@@ -168,23 +170,47 @@ static void dgram_read_done_local(
     buf_r = uv_handle_get_data((uv_handle_t*)handle);
     ASSERT(buf_r->buf_base == buf->base);
 
-    data_pos = (uint8_t*)buf->base;
-    data_len = (size_t)nread;
+    if (srv_cfg.config.asSocks5 == 0) {
 
-    /* parse s5 packet */
-    err = s5_parse_udp(&parser, &data_pos, &data_len);
-    if ( s5_exec_cmd != err ) {
-        s5netio_on_msg(LOG_ERROR, "S5 dgram parse error: %s", s5_strerror(err));
-        BREAK_NOW;
+        buf_r->data_base    = buf_r->buf_base;
+        buf_r->data_len     = (size_t)nread;
+
+        /* decrypt udp data */
+        if ( 0 != netio_on_dgram_decrypt(buf_r, 0) ) {
+            netio_on_msg(LOG_WARN, "decrypt dgram packet failed");
+            BREAK_NOW;
+        }
+        BREAK_ON_NULL(buf_r->data_len);
+
+        /* obtain address info  srv_addr.domain/port被设置 */
+        if ( 0 != s5_parse_addr(buf_r, &srv_addr) ) {
+            netio_on_msg(LOG_WARN, "parse dgram packet address failed");
+            BREAK_NOW;
+        }
+
+    } else {
+
+        data_pos = (uint8_t*)buf->base;
+        data_len = (size_t)nread;
+
+        /* parse s5 packet */
+        err = s5_parse_udp(&parser, &data_pos, &data_len);
+        if ( s5_exec_cmd != err ) {
+            netio_on_msg(LOG_ERROR, "S5 dgram parse error: %s", s5_strerror(err));
+            BREAK_NOW;
+        }
+        if ( 0 == data_len ) {
+            netio_on_msg(LOG_ERROR, "No dgram payload after parse", s5_strerror(err));
+            BREAK_NOW;
+        }
+
+        // 拷贝出远程地址
+        s5_addr_copy(&parser, &remote_sockaddr.addr, &srv_addr);
+
+        // 更新指针位置
+        buf_r->data_base = (char*)data_pos;
+        buf_r->data_len = data_len;
     }
-    if ( 0 == data_len ) {
-        s5netio_on_msg(LOG_ERROR, "No dgram payload after parse", s5_strerror(err));
-        BREAK_NOW;
-    }
-
-    // 拷贝出远程地址
-    s5_addr_copy(&parser, &remote_sockaddr.addr, &srv_addr);
-
 
     /* Stop recv until all data sent out, or error occur */
     CHECK(0 == uv_udp_recv_stop(handle));
@@ -198,11 +224,6 @@ static void dgram_read_done_local(
     snprintf(key, sizeof(key), "%s:%d-%s:%d",
              clt_addr.ip, clt_addr.port,
              srv_addr.domain, srv_addr.port);
-
-
-    // 更新指针位置
-    buf_r->data_base = (char*)data_pos;
-    buf_r->data_len = data_len;
 
     ds = dgrams_find_by_key(key);
     if ( ds ) {
@@ -252,7 +273,7 @@ static void dgram_lookup(DGRAMS *ds) {
             strcpy(ds->remote_peer.domain, host);
         }
 
-        s5netio_on_new_dgram(&ds->local_peer, &ds->remote_peer, &ds->ctx);
+        netio_on_new_dgram(&ds->local_peer, &ds->remote_peer, &ds->ctx);
         dgram_bind(ds);
 
         dgram_read_remote(ds);
@@ -269,7 +290,7 @@ static void dgram_lookup(DGRAMS *ds) {
 
             // remote_peer.ip
             sockaddr_to_str(addr, &ds->remote_peer, 0);
-            s5netio_on_new_dgram(&ds->local_peer, &ds->remote_peer, &ds->ctx);
+            netio_on_new_dgram(&ds->local_peer, &ds->remote_peer, &ds->ctx);
 
             dgram_bind(ds);
 
@@ -330,7 +351,7 @@ static void dgram_getaddrinfo_done(
             sockaddr_set_port(&ds->remote.addr, ds->remote_peer.port);
 
             sockaddr_to_str(&ds->remote.addr, &ds->remote_peer, 0);
-            s5netio_on_new_dgram(&ds->local_peer, &ds->remote_peer, &ds->ctx);
+            netio_on_new_dgram(&ds->local_peer, &ds->remote_peer, &ds->ctx);
 
             dgram_bind(ds);
 
@@ -340,7 +361,7 @@ static void dgram_getaddrinfo_done(
     }
 
     if (!valid) {
-        s5netio_on_msg(
+        netio_on_msg(
             LOG_WARN,
             "dgram getaddrinfo failed: %s, domain: %s",
             uv_strerror(status),
@@ -374,7 +395,7 @@ static void dgram_send_remote(DGRAMS *ds) {
     buf = uv_handle_get_data((uv_handle_t*)ds->udp_in);
     buf_t = uv_buf_init(buf->data_base, (unsigned int)buf->data_len);
 
-    s5netio_on_plain_dgram(buf, STREAM_UP, ds->ctx);
+    netio_on_plain_dgram(buf, STREAM_UP, ds->ctx);
 
     if ( 0 == uv_udp_send(
         &ds->req_c,
@@ -444,9 +465,14 @@ static void dgram_alloc_cb_remote(
 
     ds = uv_handle_get_data(handle);
 
-    // 事先让出S5头位置 这里给IPV6的大值
-    buf->base   = ds->buf.buf_base + S5_IPV6_UDP_SEND_HDR_LEN;
-    buf->len    = ds->buf.buf_len - S5_IPV6_UDP_SEND_HDR_LEN;
+    if (srv_cfg.config.asSocks5 == 0) {
+        buf->base   = ds->buf.buf_base;
+        buf->len    = ds->buf.buf_len;
+    } else {
+        // 事先让出S5头位置 这里给IPV6的大值
+        buf->base   = ds->buf.buf_base + S5_IPV6_UDP_SEND_HDR_LEN;
+        buf->len    = ds->buf.buf_len - S5_IPV6_UDP_SEND_HDR_LEN;
+    }
 }
 
 static void dgram_read_done_remote(
@@ -462,6 +488,7 @@ static void dgram_read_done_remote(
     char *p;
     struct sockaddr_in *in;
     struct sockaddr_in6 *in6;
+    char bs[19];
 
     (void)flags;
     (void)addr;
@@ -471,55 +498,99 @@ static void dgram_read_done_remote(
 
     ds = CONTAINER_OF(handle, DGRAMS, udp_out);
     buf_r = &ds->buf;
-    ASSERT(buf->base == buf_r->buf_base + S5_IPV6_UDP_SEND_HDR_LEN);
 
-    /* Address check */
-    ASSERT(addr->sa_family == ds->remote.addr.sa_family);
-    if ( AF_INET == addr->sa_family ) {
-        in = (struct sockaddr_in*)addr;
-        ASSERT(in->sin_port == ds->remote.addr4.sin_port);
-        ASSERT(0 == memcmp(&in->sin_addr, &ds->remote.addr4.sin_addr, sizeof(in->sin_addr)));
+    if (srv_cfg.config.asSocks5 == 0) {
+        ASSERT(buf->base == buf_r->buf_base);
+
+        buf_r->data_base    = buf_r->buf_base;
+        buf_r->data_len     = (size_t)nread;
+
+        netio_on_plain_dgram(buf_r, STREAM_DOWN, ds->ctx);
+
+        /* pack ss hdr */
+        if ( ds->remote.addr.sa_family == AF_INET ) {
+            hdr_len = 7;
+            bs[0] = '\1';
+            memcpy(&bs[1], &ds->remote.addr4.sin_addr, 4);
+            memcpy(&bs[5], &ds->remote.addr4.sin_port, 2);
+        } else if ( ds->remote.addr.sa_family == AF_INET6 ) {
+            hdr_len = 19;
+            bs[0] = '\4';
+            memcpy(&bs[1], &ds->remote.addr6.sin6_addr, 16);
+            memcpy(&bs[17], &ds->remote.addr6.sin6_port, 2);
+        } else {
+            UNREACHABLE();
+        }
+
+        /* Insert ss head to the beginning of the buf */
+        memmove(buf_r->buf_base + hdr_len, buf_r->buf_base, buf_r->data_len);
+        buf_r->data_len += hdr_len;
+        memcpy(buf_r->buf_base, bs, hdr_len);
+
+
+        if ( 0 != netio_on_dgram_encrypt(buf_r, 0) ) {
+            netio_on_msg(LOG_WARN, "encrypt dgram packet failed");
+            BREAK_NOW;
+        }
+
+        /* 发送完成之前停止接收 */
+        CHECK(0 == uv_udp_recv_stop(handle));
+
+        buf_t = uv_buf_init(buf_r->data_base, (unsigned int)buf_r->data_len);
+        dgram_send_local(ds, &buf_t);
+
+    } else {
+
+        ASSERT(buf->base == buf_r->buf_base + S5_IPV6_UDP_SEND_HDR_LEN);
+
+        /* Address check */
+        ASSERT(addr->sa_family == ds->remote.addr.sa_family);
+        if ( AF_INET == addr->sa_family ) {
+            in = (struct sockaddr_in*)addr;
+            ASSERT(in->sin_port == ds->remote.addr4.sin_port);
+            ASSERT(0 == memcmp(&in->sin_addr, &ds->remote.addr4.sin_addr, sizeof(in->sin_addr)));
+        }
+        else if ( AF_INET6 == addr->sa_family ) {
+            in6 = (struct sockaddr_in6*)addr;
+            ASSERT(in6->sin6_port == ds->remote.addr6.sin6_port);
+            ASSERT(0 == memcmp(&in6->sin6_addr, &ds->remote.addr6.sin6_addr, sizeof(in6->sin6_addr)));
+        }
+
+
+        buf_r->data_base    = buf_r->buf_base + S5_IPV6_UDP_SEND_HDR_LEN;
+        buf_r->data_len     = (size_t)nread;
+
+        netio_on_plain_dgram(buf_r, STREAM_DOWN, ds->ctx);
+
+        /* shift to socks5 hdr */
+        hdr_len = addr->sa_family == AF_INET ? S5_IPV4_UDP_SEND_HDR_LEN : S5_IPV6_UDP_SEND_HDR_LEN;
+        p = buf_r->data_base - hdr_len;
+        /* s5 hdr */
+        *p++ = (char)'\0';
+        *p++ = (char)'\0';
+        *p++ = (char)'\0';
+        *p++ = addr->sa_family == AF_INET ? (char)'\1' : (char)'\4';
+        /* Write server ip && port to s5 hdr */
+        if ( AF_INET == addr->sa_family ) {
+            in = (struct sockaddr_in*)addr;
+            memcpy(p, &in->sin_addr, sizeof(in->sin_addr));
+            p += sizeof(in->sin_addr);
+            memcpy(p, &in->sin_port, sizeof(in->sin_port));
+        }
+        else if ( AF_INET6 == addr->sa_family ) {
+            in6 = (struct sockaddr_in6*)addr;
+            memcpy(p, &in6->sin6_addr, sizeof(in6->sin6_addr));
+            p += sizeof(in6->sin6_addr);
+            memcpy(p, &in6->sin6_port, sizeof(in6->sin6_port));
+        }
+
+
+        /* 发送完成之前停止接收 */
+        CHECK(0 == uv_udp_recv_stop(handle));
+
+        buf_t = uv_buf_init(buf_r->data_base - hdr_len, buf_r->data_len + hdr_len);
+        dgram_send_local(ds, &buf_t);
     }
-    else if ( AF_INET6 == addr->sa_family ) {
-        in6 = (struct sockaddr_in6*)addr;
-        ASSERT(in6->sin6_port == ds->remote.addr6.sin6_port);
-        ASSERT(0 == memcmp(&in6->sin6_addr, &ds->remote.addr6.sin6_addr, sizeof(in6->sin6_addr)));
-    }
-
-
-    buf_r->data_base    = buf_r->buf_base + S5_IPV6_UDP_SEND_HDR_LEN;
-    buf_r->data_len     = (size_t)nread;
-
-    s5netio_on_plain_dgram(buf_r, STREAM_DOWN, ds->ctx);
-
-    /* shift to socks5 hdr */
-    hdr_len = addr->sa_family == AF_INET ? S5_IPV4_UDP_SEND_HDR_LEN : S5_IPV6_UDP_SEND_HDR_LEN;
-    p = buf_r->data_base - hdr_len;
-    /* s5 hdr */
-    *p++ = (char)'\0';
-    *p++ = (char)'\0';
-    *p++ = (char)'\0';
-    *p++ = addr->sa_family == AF_INET ? (char)'\1' : (char)'\4';
-    /* Write server ip && port to s5 hdr */
-    if ( AF_INET == addr->sa_family ) {
-        in = (struct sockaddr_in*)addr;
-        memcpy(p, &in->sin_addr, sizeof(in->sin_addr));
-        p += sizeof(in->sin_addr);
-        memcpy(p, &in->sin_port, sizeof(in->sin_port));
-    }
-    else if ( AF_INET6 == addr->sa_family ) {
-        in6 = (struct sockaddr_in6*)addr;
-        memcpy(p, &in6->sin6_addr, sizeof(in6->sin6_addr));
-        p += sizeof(in6->sin6_addr);
-        memcpy(p, &in6->sin6_port, sizeof(in6->sin6_port));
-    }
-
-
-    /* 发送完成之前停止接收 */
-    CHECK(0 == uv_udp_recv_stop(handle));
-
-    buf_t = uv_buf_init(buf_r->data_base - hdr_len, buf_r->data_len + hdr_len);
-    dgram_send_local(ds, &buf_t);
 
 BREAK_LABEL:
 
@@ -530,7 +601,7 @@ static void dgram_timer_reset(DGRAMS *ds) {
     CHECK(0 == uv_timer_start(
         &ds->timer,
         dgram_timer_expire,
-        srv_ctx.config.idel_timeout,
+        srv_cfg.config.idel_timeout,
         0));
 }
 
@@ -538,6 +609,6 @@ static void dgram_timer_expire(uv_timer_t *handle) {
     DGRAMS *ds;
 
     ds = CONTAINER_OF(handle, DGRAMS, timer);
-    s5netio_on_dgram_teardown(ds->ctx);
+    netio_on_dgram_teardown(ds->ctx);
     dgrams_remove(ds);
 }

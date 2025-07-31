@@ -30,6 +30,10 @@ typedef struct {
     unsigned short bind_port;
     unsigned int idel_timeout;  /* 秒 */
 
+    int asSocks5;               // socks5 or shadowsocks
+    const char *password;
+    const char *method;
+
     const char *root_cert;      /* 根证书 文件路径 */
     const char *root_key;       /* 根证书秘钥 文件路径 */
 } socks5_crypto_cfg;
@@ -79,10 +83,10 @@ typedef struct {
 
     // 事件回调表
     socks5_crypto_callback callbacks;
-} socks5_crypto_ctx;
+} socks5_server_config;
 
 
-int socks5_crypto_launch(const socks5_crypto_ctx *ctx);
+int socks5_crypto_launch(const socks5_server_config *ctx);
 void socks5_crypto_stop();
 
 #endif //SOCKS5_CRYPTO_H

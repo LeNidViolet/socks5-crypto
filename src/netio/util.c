@@ -250,3 +250,56 @@ int s5_addr_copy(s5_ctx *ctx, struct sockaddr *addr, ADDRESS *addr_s) {
 
     return 0;
 }
+
+
+int s5_parse_addr(BUF_RANGE *buf, ADDRESS *addr) {
+    s5_ctx parser;
+    uint8_t *p;
+    size_t len;
+    s5_err err;
+    int offset, ret = -1;
+    union {
+        struct sockaddr_in6 addr6;
+        struct sockaddr_in addr4;
+        struct sockaddr addr;
+    } s;
+
+    p = (uint8_t *)buf->data_base;
+    len = buf->data_len;
+    err = s5_parse_ss(&parser, &p, &len);
+    BREAK_ON_FALSE(err == s5_exec_cmd);
+
+    offset = (int)((char*)p - buf->data_base);
+    buf->data_base = buf->data_base + offset;
+    buf->data_len = buf->data_len - offset;
+
+    switch ( parser.atyp )
+    {
+        case s5_atyp_ipv4:
+            s.addr4.sin_family = AF_INET;
+            memcpy(&s.addr4.sin_addr, parser.daddr, sizeof(s.addr4.sin_addr));
+
+            CHECK(0 == uv_ip4_name(&s.addr4, addr->domain, sizeof(addr->domain)));
+            break;
+
+        case s5_atyp_ipv6:
+            s.addr6.sin6_family = AF_INET6;
+            memcpy(&s.addr6.sin6_addr, parser.daddr, sizeof(s.addr6.sin6_addr));
+
+            CHECK(0 == uv_ip6_name(&s.addr6, addr->domain, sizeof(addr->domain)));
+            break;
+
+        case s5_atyp_host:
+            memcpy(addr->domain, parser.daddr, strlen((char*)parser.daddr));
+            break;
+        default:
+            BREAK_NOW;
+    }
+    addr->port = parser.dport;
+
+    ret = 0;
+
+    BREAK_LABEL:
+
+        return ret;
+}

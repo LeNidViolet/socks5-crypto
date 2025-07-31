@@ -92,7 +92,7 @@ typedef struct {
         struct sockaddr addr;
     } addr;     // remote
 
-    char slab[MAX_TCP_PAYLOAD_LEN];
+    char slab[MAX_SS_TCP_FRAME_LEN];
 
     ADDRESS peer;
     BUF_RANGE buf;
@@ -153,19 +153,22 @@ enum {
 int s5_parse_addr(BUF_RANGE *buf, ADDRESS *addr);
 
 /* HANDLER.C */
-void s5netio_on_msg(int level, const char *format, ...);
-void s5netio_on_bind(const char *host, unsigned short port);
-void s5netio_on_connection_made(PROXY_NODE *pn);
-void s5netio_on_new_stream(const CONN *conn);
-void s5netio_on_stream_teardown(const PROXY_NODE *pn);
-void s5netio_on_new_dgram(ADDRESS *local, ADDRESS *remote, void **ctx);
-void s5netio_on_dgram_teardown(void *ctx);
-int  s5netio_on_plain_stream(const CONN *conn);
-void s5netio_on_plain_dgram(const BUF_RANGE *buf, int direct, void *ctx);
+void netio_on_msg(int level, const char *format, ...);
+void netio_on_bind(const char *host, unsigned short port);
+void netio_on_connection_made(PROXY_NODE *pn);
+void netio_on_new_stream(const CONN *conn);
+void netio_on_stream_teardown(const PROXY_NODE *pn);
+void netio_on_new_dgram(ADDRESS *local, ADDRESS *remote, void **ctx);
+void netio_on_dgram_teardown(void *ctx);
+int  netio_on_stream_encrypt(CONN *conn, int offset);
+int  netio_on_stream_decrypt(CONN *conn, int offset);
+int  netio_on_dgram_encrypt(BUF_RANGE *buf, int offset);
+int  netio_on_dgram_decrypt(BUF_RANGE *buf, int offset);
+int  netio_on_plain_stream(const CONN *conn);
+void netio_on_plain_dgram(const BUF_RANGE *buf, int direct, void *ctx);
 
-int  s5netio_write_stream_out(
-    const char *buf, size_t len, int direct, void *stream_id);
-void s5netio_stream_pause(void *stream_id, int direct, int pause);
+int  netio_write_stream_out(const char *buf, size_t len, int direct, void *stream_id);
+void netio_stream_pause(void *stream_id, int direct, int pause);
 
 
 

@@ -66,7 +66,7 @@ int server_tcp_launch(uv_loop_t *loop, const struct sockaddr *addr) {
 
     ret = uv_tcp_bind(tcp_handle, addr, 0);
     if ( 0 != ret ) {
-        s5netio_on_msg(
+        netio_on_msg(
             LOG_ERROR,
             "tcp bind to %s:%d failed: %s",
             address.ip,
@@ -77,7 +77,7 @@ int server_tcp_launch(uv_loop_t *loop, const struct sockaddr *addr) {
 
     ret = uv_listen((uv_stream_t *)tcp_handle, SOMAXCONN, on_connection);
     if ( 0 != ret ) {
-        s5netio_on_msg(
+        netio_on_msg(
             LOG_ERROR,
             "tcp listen to %s:%d failed: %s",
             address.ip,
@@ -102,7 +102,7 @@ BREAK_LABEL:
 
 // ===========
 // ===========
-extern socks5_crypto_ctx srv_ctx;
+extern socks5_server_config srv_cfg;
 extern SERVER_ADDRESSES srv_addrs;
 static void conn_alloc(uv_handle_t *handle, size_t size, uv_buf_t *buf);
 static void conn_read_done(uv_stream_t *handle, ssize_t nread, const uv_buf_t *buf);
@@ -118,7 +118,8 @@ static void conn_timer_expire_server(uv_timer_t *handle);
 static void conn_getaddrinfo_done(uv_getaddrinfo_t *req, int status, struct addrinfo *addrs);
 static void conn_getaddrinfo(CONN *conn, const char *hostname);
 
-static int  do_handshake(PROXY_NODE *pn);
+static int  do_handshake_s5(PROXY_NODE *pn);
+static int  do_handshake_ss(PROXY_NODE *pn);
 static int  do_req_start(PROXY_NODE *pn);
 static int  do_req_parse(PROXY_NODE *pn);
 static int  do_req_connect(PROXY_NODE *pn);
@@ -175,7 +176,7 @@ static void on_connection(uv_stream_t *server, int status) {
     incoming->result = 0;
     incoming->rdstate = c_stop;
     incoming->wrstate = c_stop;
-    incoming->idle_timeout = srv_ctx.config.idel_timeout;
+    incoming->idle_timeout = srv_cfg.config.idel_timeout;
     CHECK(0 == uv_timer_init(loop, &incoming->timer_handle));
 
     CHECK(0 == uv_tcp_init(loop, &outgoing->handle.tcp));
@@ -184,14 +185,16 @@ static void on_connection(uv_stream_t *server, int status) {
     outgoing->result = 0;
     outgoing->rdstate = c_stop;
     outgoing->wrstate = c_stop;
-    outgoing->idle_timeout = srv_ctx.config.idel_timeout;
+    outgoing->idle_timeout = srv_cfg.config.idel_timeout;
     CHECK(0 == uv_timer_init(loop, &outgoing->timer_handle));
 
-    incoming->buf.buf_base = incoming->slab;
+    incoming->buf.buf_base = incoming->buf.data_base = incoming->slab;
     incoming->buf.buf_len = sizeof(incoming->slab);
+    incoming->buf.data_len = 0;
 
-    outgoing->buf.buf_base = outgoing->slab;
+    outgoing->buf.buf_base = outgoing->buf.data_base = outgoing->slab;
     outgoing->buf.buf_len = sizeof(outgoing->slab);
+    outgoing->buf.data_len = 0;
 
 
     // 设置 incoming.peer.ip
@@ -201,7 +204,7 @@ static void on_connection(uv_stream_t *server, int status) {
     strcpy(incoming->peer.domain, incoming->peer.ip);
 
     /* Emit notify */
-    s5netio_on_new_stream(incoming);
+    netio_on_new_stream(incoming);
 
     /* Wait for the initial packet. */
     conn_read(incoming);
@@ -373,7 +376,7 @@ static void conn_timer_expire_server(uv_timer_t *handle) {
 static int conn_cycle(const char *who, CONN *recver, CONN *sender) {
     if ( recver->result < 0 ) {
         if ( UV_EOF != recver->result ) {
-            s5netio_on_msg(
+            netio_on_msg(
                 LOG_WARN,
                 "%4d %s error: %s [%s]",
                 recver->pn->index,
@@ -425,10 +428,18 @@ static int do_proxy_start(PROXY_NODE *pn) {
         BREAK_NOW;
     }
 
-    ASSERT(c_stop == incoming->rdstate);
-    ASSERT(c_done == incoming->wrstate);
-    ASSERT(c_stop == outgoing->rdstate);
-    ASSERT(c_stop == outgoing->wrstate);
+    if (srv_cfg.config.asSocks5 == 0) {
+        ASSERT(c_stop == incoming->rdstate);
+        ASSERT(c_stop == incoming->wrstate);
+        ASSERT(c_stop == outgoing->rdstate);
+        ASSERT(c_done == outgoing->wrstate);
+    } else {
+        ASSERT(c_stop == incoming->rdstate);
+        ASSERT(c_done == incoming->wrstate);
+        ASSERT(c_stop == outgoing->rdstate);
+        ASSERT(c_stop == outgoing->wrstate);
+    }
+
     outgoing->wrstate = c_stop;
 
     conn_read(incoming);
@@ -443,7 +454,7 @@ BREAK_LABEL:
 
 // ReSharper disable once CppParameterMayBeConstPtrOrRef
 static int do_proxy(CONN *sender) {
-    int new_state = s_proxy, action;
+    int new_state = s_proxy, encrypt = 0, action;
     CONN *incoming;
     CONN *outgoing;
 
@@ -451,20 +462,69 @@ static int do_proxy(CONN *sender) {
     outgoing = &sender->pn->outgoing;
 
     if ( c_done == sender->rdstate && sender->result >= 0 ) {
-        action = s5netio_on_plain_stream(sender);
-        switch (action) {
-        case PASS:
-            break;
+        if (srv_cfg.config.asSocks5 == 0) {
+            encrypt = sender == outgoing;
 
-        case NEEDMORE:
-        case REJECT:
-            BREAK_NOW;
+            if ( encrypt ) {
+                sender->buf.data_len = (size_t)sender->result;
+                action = netio_on_plain_stream(sender);
+                switch (action) {
+                    case PASS:
+                        break;
 
-        case TERMINATE:
-            new_state = do_kill(incoming->pn);
-            BREAK_NOW;
-        default:
-            UNREACHABLE();
+                    case NEEDMORE:
+                    case REJECT:
+                        BREAK_NOW;
+
+                    case TERMINATE:
+                        new_state = do_kill(incoming->pn);
+                        BREAK_NOW;
+                    default:
+                        UNREACHABLE();
+                }
+
+                if ( 0 != netio_on_stream_encrypt(sender, 0) ) {
+                    new_state = do_kill(incoming->pn);
+                    BREAK_NOW;
+                }
+            } else {
+                if ( 0 != netio_on_stream_decrypt(sender, 0) ) {
+                    new_state = do_kill(incoming->pn);
+                    BREAK_NOW;
+                }
+
+                action = netio_on_plain_stream(sender);
+                switch (action) {
+                    case PASS:
+                        break;
+
+                    case NEEDMORE:
+                    case REJECT:
+                        BREAK_NOW;
+
+                    case TERMINATE:
+                        new_state = do_kill(incoming->pn);
+                        BREAK_NOW;
+                    default:
+                        UNREACHABLE();
+                }
+            }
+        } else {
+            action = netio_on_plain_stream(sender);
+            switch (action) {
+                case PASS:
+                    break;
+
+                case NEEDMORE:
+                case REJECT:
+                    BREAK_NOW;
+
+                case TERMINATE:
+                    new_state = do_kill(incoming->pn);
+                    BREAK_NOW;
+                default:
+                    UNREACHABLE();
+            }
         }
     }
 
@@ -488,7 +548,7 @@ int do_kill(PROXY_NODE *pn) {
 
     if ( 0 != pn->outstanding ) {
         /* Wait for uncomplete operations */
-        s5netio_on_msg(
+        netio_on_msg(
             LOG_INFO,
             "%4d waitting outstanding operation: %d [%s]",
             pn->index, pn->outstanding, pn->link_info);
@@ -517,7 +577,7 @@ static int do_almost_dead(const PROXY_NODE *pn) {
 }
 
 static int do_clear(PROXY_NODE *pn) {
-    s5netio_on_stream_teardown(pn);
+    netio_on_stream_teardown(pn);
 
     if ( DEBUG_CHECKS ) {
         memset(pn, -1, sizeof(*pn));
@@ -526,7 +586,7 @@ static int do_clear(PROXY_NODE *pn) {
     pn_outstanding--;
 
     if ( 0 == pn_outstanding )
-        s5netio_on_msg(LOG_INFO, "pn outstanding return to 0");
+        netio_on_msg(LOG_INFO, "pn outstanding return to 0");
 
     return 0;
 }
@@ -589,7 +649,11 @@ static void do_next_server(CONN *sender) {
     ASSERT(s_dead != pn->state);
     switch (pn->state) {
     case s_handshake:
-        new_state = do_handshake(pn);
+        if (srv_cfg.config.asSocks5 == 0) {
+            new_state = do_handshake_ss(pn);
+        } else {
+            new_state = do_handshake_s5(pn);
+        }
         break;
     case s_req_start:
         new_state = do_req_start(pn);
@@ -636,7 +700,102 @@ static void do_next_server(CONN *sender) {
 
 
 
-static int do_handshake(PROXY_NODE *pn) {
+static int do_handshake_ss(PROXY_NODE *pn) {
+    CONN *incoming;
+    CONN *outgoing;
+    int ret, new_state;
+    struct addrinfo hints;
+    const char *host;
+    struct sockaddr* addr;
+
+    incoming = &pn->incoming;
+    outgoing = &pn->outgoing;
+
+    if ( incoming->result < 0 ) {
+        netio_on_msg(LOG_WARN, "%4d handshake read error: %s",
+                       pn->index, uv_strerror((int)incoming->result));
+        new_state = do_kill(pn);
+        BREAK_NOW;
+    }
+
+    ASSERT(c_done == incoming->rdstate);
+    ASSERT(c_stop == incoming->wrstate);
+    incoming->rdstate = c_stop;
+
+    if ( 0 != netio_on_stream_decrypt(incoming, 0) ) {
+        netio_on_msg(LOG_WARN, "%4d handshake data decrypt failed", pn->index);
+        new_state = do_kill(pn);
+        BREAK_NOW;
+    }
+
+    /* Parser to get dest address  解析之后填充 outgoing.peer.domain */
+    ret = s5_parse_addr(&incoming->buf, &outgoing->peer);
+    if ( 0 != ret ) {
+        netio_on_msg(LOG_WARN, "%4d handshake parse addr error", pn->index);
+        new_state = do_kill(pn);
+        BREAK_NOW;
+    }
+
+    /* Maybe it's an ip address in string form */
+    if ( 0 == uv_ip4_addr(outgoing->peer.domain, outgoing->peer.port, &outgoing->addr.addr4) ||
+         0 == uv_ip6_addr(outgoing->peer.domain, outgoing->peer.port, &outgoing->addr.addr6)) {
+
+        // 拷贝到 outgoing.peer.ip
+        strcpy(outgoing->peer.ip, outgoing->peer.domain);
+
+        host = dns_cache_find_host(&outgoing->addr.addr);
+        if ( host ) {
+            memset(outgoing->peer.domain, 0, sizeof(outgoing->peer.domain));
+            strcpy(outgoing->peer.domain, host);
+        }
+
+        new_state = do_req_lookup(pn);
+        BREAK_NOW;
+    }
+
+    addr = dns_cache_find_ip(outgoing->peer.domain, 1);
+    if ( !addr ) {
+        addr = dns_cache_find_ip(outgoing->peer.domain, 0);
+    }
+    if ( addr ) {
+        // 拷贝到 outgoing.peer.ip
+        sockaddr_to_str(addr, &outgoing->peer, 0);
+
+        sockaddr_cpy(addr, &outgoing->addr.addr);
+        sockaddr_set_port(&outgoing->addr.addr, outgoing->peer.port);
+        new_state = do_req_lookup(pn);
+
+    } else {
+        // 进行DNS查询
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+
+        if ( 0 != uv_getaddrinfo(pn->loop,
+                                 &outgoing->req.addrinfo_req,
+                                 conn_getaddrinfo_done,
+                                 outgoing->peer.domain,
+                                 NULL,
+                                 &hints) ) {
+            new_state = do_kill(pn);
+            BREAK_NOW;
+        }
+
+        pn->outstanding++;
+        conn_timer_reset(outgoing);
+
+        new_state = s_req_lookup;
+    }
+
+BREAK_LABEL:
+
+    return new_state;
+}
+
+
+
+static int do_handshake_s5(PROXY_NODE *pn) {
     CONN *incoming;
     int new_state;
     int err;
@@ -647,7 +806,7 @@ static int do_handshake(PROXY_NODE *pn) {
     incoming = &pn->incoming;
 
     if ( incoming->result < 0 ) {
-        s5netio_on_msg(LOG_WARN, "%4d handshake read error: %s",
+        netio_on_msg(LOG_WARN, "%4d handshake read error: %s",
                        pn->index, uv_strerror((int)incoming->result));
         new_state = do_kill(pn);
         BREAK_NOW;
@@ -668,7 +827,7 @@ static int do_handshake(PROXY_NODE *pn) {
     }
 
     if ( 0 != data_len ) {
-        s5netio_on_msg(LOG_ERROR, "%4d Junk in equest %u", pn->index, (unsigned)data_len);
+        netio_on_msg(LOG_ERROR, "%4d Junk in equest %u", pn->index, (unsigned)data_len);
         new_state = do_kill(pn);
         BREAK_NOW;
     }
@@ -751,20 +910,20 @@ static int do_req_parse(PROXY_NODE *pn) {
     }
 
     if ( 0 != data_len ) {
-        s5netio_on_msg(LOG_ERROR, "%4d Junk in equest %u", pn->index, (unsigned)data_len);
+        netio_on_msg(LOG_ERROR, "%4d Junk in equest %u", pn->index, (unsigned)data_len);
         new_state = do_kill(pn);
         BREAK_NOW;
     }
 
     if ( s5_exec_cmd != err ) {
-        s5netio_on_msg(LOG_ERROR, "%4d Request error: %s", pn->index, s5_strerror((s5_err)err));
+        netio_on_msg(LOG_ERROR, "%4d Request error: %s", pn->index, s5_strerror((s5_err)err));
         new_state = do_kill(pn);
         BREAK_NOW;
     }
 
     if ( s5_cmd_tcp_bind == parser->cmd ) {
         /* Not supported */
-        s5netio_on_msg(LOG_ERROR, "%4d Bind requests are not supported.", pn->index);
+        netio_on_msg(LOG_ERROR, "%4d Bind requests are not supported.", pn->index);
         new_state = do_kill(pn);
         BREAK_NOW;
     }
@@ -775,7 +934,7 @@ static int do_req_parse(PROXY_NODE *pn) {
     }
 
     if ( s5_cmd_tcp_connect != parser->cmd ) {
-        s5netio_on_msg(LOG_ERROR, "%4d Unknow s5 command %d.", pn->index, parser->cmd);
+        netio_on_msg(LOG_ERROR, "%4d Unknow s5 command %d.", pn->index, parser->cmd);
         new_state = do_kill(pn);
         BREAK_NOW;
     }
@@ -841,7 +1000,7 @@ static int do_req_lookup(PROXY_NODE *pn) {
     outgoing = &pn->outgoing;
 
     if ( outgoing->result < 0 ) {
-        s5netio_on_msg(LOG_WARN, "%4d lookup error for %s : %s",
+        netio_on_msg(LOG_WARN, "%4d lookup error for %s : %s",
                        pn->index,
                        outgoing->peer.domain,
                        uv_strerror((int)outgoing->result));
@@ -891,7 +1050,7 @@ static int do_req_connect_start(PROXY_NODE *pn) {
 
     err = conn_connect(outgoing);
     if ( err != 0 ) {
-        s5netio_on_msg(LOG_ERROR, "%4d Connect error: %s", pn->index, uv_strerror(err));
+        netio_on_msg(LOG_ERROR, "%4d Connect error: %s", pn->index, uv_strerror(err));
         new_state = do_kill(pn);
     } else {
         new_state = s_req_connect;
@@ -905,7 +1064,7 @@ static int do_req_connect(PROXY_NODE *pn) {
     CONN *incoming;
     CONN *outgoing;
     int addrlen;
-    int new_state;
+    int new_state, action;
     char *host;
     char addr_storage[sizeof(struct sockaddr_in6)];
     static char ipv4_reply[] = { "\5\0\0\1\0\0\0\0\16\16" };
@@ -917,7 +1076,7 @@ static int do_req_connect(PROXY_NODE *pn) {
     outgoing = &pn->outgoing;
 
     if ( 0 != outgoing->result ) {
-        s5netio_on_msg(
+        netio_on_msg(
             LOG_WARN,
             "%4d connect to %s:%d failed: %s",
             pn->index,
@@ -934,14 +1093,16 @@ static int do_req_connect(PROXY_NODE *pn) {
     ASSERT(c_stop == outgoing->wrstate);
 
 
-    /* 替换成可读性更高的域名 */
-    host = (char*)dns_cache_find_host(&outgoing->addr.addr);
-    if ( host ) {
-        memset(outgoing->peer.domain, 0, sizeof(outgoing->peer.domain));
-        strcpy(outgoing->peer.domain, host);
+    if (srv_cfg.config.asSocks5 != 0) {
+        /* 替换成可读性更高的域名 */
+        host = (char*)dns_cache_find_host(&outgoing->addr.addr);
+        if ( host ) {
+            memset(outgoing->peer.domain, 0, sizeof(outgoing->peer.domain));
+            strcpy(outgoing->peer.domain, host);
+        }
     }
 
-    s5netio_on_connection_made(pn);
+    netio_on_connection_made(pn);
 
     snprintf(pn->link_info, sizeof(pn->link_info), "%s:%d -> %s:%d",
              incoming->peer.domain,
@@ -949,23 +1110,57 @@ static int do_req_connect(PROXY_NODE *pn) {
              outgoing->peer.domain,
              outgoing->peer.port);
 
-    addrlen = sizeof(addr_storage);
-    if ( 0 != uv_tcp_getsockname(&outgoing->handle.tcp,
-                                 (struct sockaddr *) addr_storage,
-                                 &addrlen) ) {
-        new_state = do_kill(pn);
-        BREAK_NOW;
-   }
+    if (srv_cfg.config.asSocks5 == 0) {
 
-    if ( addrlen == sizeof(struct sockaddr_in) ) {
-        conn_write(incoming, ipv4_reply, 10);
-    } else if ( addrlen == sizeof(struct sockaddr_in6) ) {
-        conn_write(incoming, ipv6_reply, 22);
+        if ( 0 == incoming->buf.data_len ) {
+            conn_read(incoming);
+            conn_read(outgoing);
+            new_state = s_proxy;
+        } else {
+            action = netio_on_plain_stream(incoming);
+            switch (action) {
+                case PASS:
+                    break;
+
+                case NEEDMORE:
+                case REJECT:
+                    new_state = s_proxy;
+                    BREAK_NOW;
+
+                case TERMINATE:
+                    new_state = do_kill(pn);
+                    BREAK_NOW;
+                default:
+                    UNREACHABLE();
+            }
+
+            conn_write(
+                outgoing,
+                incoming->buf.data_base,
+                (unsigned int)incoming->buf.data_len);
+            new_state = s_proxy_start;
+        }
+
     } else {
-        UNREACHABLE();
-    }
 
-    new_state = s_proxy_start;
+        addrlen = sizeof(addr_storage);
+        if ( 0 != uv_tcp_getsockname(&outgoing->handle.tcp,
+                                     (struct sockaddr *) addr_storage,
+                                     &addrlen) ) {
+            new_state = do_kill(pn);
+            BREAK_NOW;
+                                     }
+
+        if ( addrlen == sizeof(struct sockaddr_in) ) {
+            conn_write(incoming, ipv4_reply, 10);
+        } else if ( addrlen == sizeof(struct sockaddr_in6) ) {
+            conn_write(incoming, ipv6_reply, 22);
+        } else {
+            UNREACHABLE();
+        }
+
+        new_state = s_proxy_start;
+    }
 
 BREAK_LABEL:
 
@@ -992,9 +1187,9 @@ static int do_dgram_response(PROXY_NODE *pn) {
 
     // 返回固定端口
     if (pn->parser.atyp == s5_atyp_ipv4) {
-        uv_ip4_addr(srv_addrs.addrv4_str, srv_ctx.config.bind_port, &addr.addr4);
+        uv_ip4_addr(srv_addrs.addrv4_str, srv_cfg.config.bind_port, &addr.addr4);
     } else {
-        uv_ip6_addr(srv_addrs.addrv6_str, srv_ctx.config.bind_port, &addr.addr6);
+        uv_ip6_addr(srv_addrs.addrv6_str, srv_cfg.config.bind_port, &addr.addr6);
     }
 
     p_addr = addr.addr.sa_family ==
