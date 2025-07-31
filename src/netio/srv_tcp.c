@@ -251,13 +251,16 @@ static void conn_read_done(uv_stream_t *handle, ssize_t nread, const uv_buf_t *b
     CONN *conn;
 
     conn = uv_handle_get_data((uv_handle_t*)handle);
-    ASSERT(conn->buf.buf_base == buf->base);
     ASSERT(c_busy == conn->rdstate);
     conn->rdstate = c_done;
     conn->result = nread;
 
-    conn->buf.data_base = buf->base;
-    conn->buf.data_len = nread;
+    if (nread > 0) {
+        ASSERT(conn->buf.buf_base == buf->base);
+        conn->buf.data_base = buf->base;
+        conn->buf.data_len = nread;
+    }
+
     uv_read_stop(&conn->handle.stream);
     do_next(conn);
 }
