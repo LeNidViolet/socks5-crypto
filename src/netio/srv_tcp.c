@@ -224,7 +224,7 @@ static void conn_alloc(uv_handle_t *handle, size_t size, uv_buf_t *buf) {
     conn = uv_handle_get_data(handle);
 
     buf->base = conn->buf.buf_base;
-    buf->len = conn->buf.buf_len;
+    buf->len = conn->buf.buf_len - MAX_S5_HDR_LEN;
 }
 
 void conn_read(CONN *conn) {
@@ -318,8 +318,13 @@ static void conn_close(CONN *conn) {
     conn->wrstate = c_dead;
     uv_handle_set_data((uv_handle_t*)&conn->timer_handle, conn);
     uv_handle_set_data(&conn->handle.handle, conn);
-    uv_close(&conn->handle.handle, conn_close_done);
-    uv_close((uv_handle_t*)&conn->timer_handle, conn_close_done);
+
+    if (!uv_is_closing(&conn->handle.handle)) {
+        uv_close(&conn->handle.handle, conn_close_done);
+    }
+    if (!uv_is_closing((uv_handle_t*)&conn->timer_handle)) {
+        uv_close((uv_handle_t*)&conn->timer_handle, conn_close_done);
+    }
 }
 
 // ReSharper disable once CppParameterMayBeConstPtrOrRef
