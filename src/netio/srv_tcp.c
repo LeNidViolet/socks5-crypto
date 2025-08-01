@@ -413,7 +413,7 @@ static int conn_cycle(const char *who, CONN *recver, CONN *sender) {
             conn_read(sender);
         }
         else if ( c_done == sender->rdstate ) {
-            conn_write(recver, sender->buf.buf_base, (unsigned int)sender->result);
+            conn_write(recver, sender->buf.data_base, (unsigned int)sender->buf.data_len);
             sender->rdstate = c_stop;  /* Triggers the call to conn_read() above. */
         }
     }
@@ -733,6 +733,14 @@ static int do_handshake_ss(PROXY_NODE *pn) {
     if ( 0 != netio_on_stream_decrypt(incoming, 0) ) {
         netio_on_msg(LOG_WARN, "%4d handshake data decrypt failed", pn->index);
         new_state = do_kill(pn);
+        BREAK_NOW;
+    }
+
+    // 有可能第一次只传一个IV过来
+    if (incoming->buf.data_len == 0) {
+        conn_read(incoming);
+        // 数据不足 继续读取数据
+        new_state = s_handshake;
         BREAK_NOW;
     }
 
