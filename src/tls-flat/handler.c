@@ -44,7 +44,7 @@ void tlsflat_on_msg(int level, const char *format, ...) {
 /* 解密明文向上传递 */
 // ReSharper disable once CppParameterMayBeConstPtrOrRef
 // ReSharper disable once CppParameterMayBeConst
-void tlsflat_plain_stream(stream_session *ss, int direct, const char *data, size_t data_len) {
+void tlsflat_plain_stream(stream_session *ss, int direct, const char *data, const size_t data_len) {
     socks5_crypto_tls_on_plain_stream(data, data_len, direct, ss->caller_ctx);
 }
 
@@ -166,8 +166,6 @@ int tlsflat_on_plain_stream(const BUF_RANGE *buf, int direct, void *ctx) {
     }
 
     action = tls_recv_done_do_next(ts);
-
-BREAK_LABEL:
 
     return action;
 }

@@ -97,8 +97,6 @@ const char* dns_cache_find_host(const struct sockaddr *addr) {
             break;
     }
 
-BREAK_LABEL:
-
     return ret;
 }
 

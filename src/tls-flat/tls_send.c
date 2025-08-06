@@ -62,7 +62,5 @@ int on_tls_send(void *ctx, const unsigned char *buf, size_t len) {
 //    ret = MBEDTLS_ERR_SSL_WANT_WRITE;
     ret = (int)len;
 
-BREAK_LABEL:
-
     return ret;
 }

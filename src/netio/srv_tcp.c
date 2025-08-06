@@ -1235,8 +1235,6 @@ static int do_dgram_response(PROXY_NODE *pn) {
 
     ret = s_dgram_start;
 
-BREAK_LABEL:
-
     return ret;
 }
 

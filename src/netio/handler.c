@@ -258,7 +258,7 @@ static void netio_write_stream_out_done(uv_write_t *req, int status) {
 }
 
 // ReSharper disable once CppParameterMayBeConst
-void netio_stream_pause(void *stream_id, int direct, int pause) {
+void netio_stream_pause(void *stream_id, int direct, const int pause) {
     PROXY_NODE *pn;
     CONN *conn;
 

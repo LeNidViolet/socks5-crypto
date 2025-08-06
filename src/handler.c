@@ -268,7 +268,7 @@ BREAK_LABEL:
 
 /* 由TLSFLAT解密数据之后调用至此 */
 // ReSharper disable once CppParameterMayBeConst
-void socks5_crypto_tls_on_plain_stream(const char *data, size_t data_len, int direct, void *ss_ctx) {
+void socks5_crypto_tls_on_plain_stream(const char *data, size_t data_len, const int direct, void *ss_ctx) {
     STREAM_SESSION_CRYP *session;
 
     session = (STREAM_SESSION_CRYP *)ss_ctx;
